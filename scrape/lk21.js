@@ -1,53 +1,41 @@
 import * as cheerio from 'cheerio';
-import fs from 'fs';
+import { URLSearchParams } from 'url';
 export class lk21 {
 	constructor() {
 		this.base = 'https://tv3.lk21online.mom';
+		this.baseDL = 'https://dl.lk21.party';
 	}
 
 	async byGenre(genre, page = 1) {
 		const html = await this.fetch(this.base + '/genre/' + genre + '/page/' + page);
-		const tag = this.extractTag(html, 'genre1');
-		if (!tag.includes(genre)) throw new Error('Pilih Salah Satu Genre: ' + tag.join(', '));
-		const result = this.extractMetadata(html);
-		if (!result?.length) throw new Error('Gagal Mengambil Data Genre');
-		return result;
+		this.extractTag(html, 'genre1', genre);
+		return this.extractMetadata(html);
 	}
 
 	async byCountry(county, page = 1) {
 		const html = await this.fetch(this.base + '/country/' + county + '/page/' + page);
-		const tag = this.extractTag(html, 'country');
-		if (!tag.includes(county)) throw new Error('Pilih Salah Satu Country: ' + tag.join(', '));
-		const result = this.extractMetadata(html);
-		if (!result?.length) throw new Error('Gagal Mengambil Data Country');
-		return result;
+		this.extractTag(html, 'country', country);
+		return this.extractMetadata(html);
 	}
 
 	async byYear(year, page = 1) {
 		const html = await this.fetch(this.base + '/year/' + year + '/page/' + page);
-		const tag = this.extractTag(html, 'tahun');
-		if (!tag.includes(year)) throw new Error('Pilih Salah Satu Tahun: ' + tag.join(', '));
-		const result = this.extractMetadata(html);
-		if (!result?.length) throw new Error('Gagal Mengambil Data Year');
-		return result;
+		this.extractTag(html, 'tahun', year);
+		return this.extractMetadata(html);
 	}
 
 	async bySeries(series, page = 1) {
 		const list = ['asian', 'west', 'ongoing', 'complete'];
 		if (!list.includes(series)) throw new Error('Pilih Salah Satu Series: ' + list.join(', '));
 		const html = await this.fetch(this.base + '/series/' + series + '/page/' + page);
-		const result = this.extractMetadata(html);
-		if (!result?.length) throw new Error('Gagal Mengambil Data Year');
-		return result;
+		return this.extractMetadata(html);
 	}
 
-	async byPopuler(type = 'both', page = 1) {
+	async byPopuler(type, page = 1) {
 		const list = ['both', 'movie', 'series'];
-		if (!list.includes(series)) throw new Error('Pilih Salah Satu Type: ' + list.join(', '));
+		if (!list.includes(type)) throw new Error('Pilih Salah Satu Type: ' + list.join(', '));
 		const html = await this.fetch(this.base + '/populer/type/' + type + '/page/' + page);
-		const result = this.extractMetadata(html);
-		if (!result?.length) throw new Error('Gagal Mengambil Data Year');
-		return result;
+		return this.extractMetadata(html);
 	}
 
 	async Search(query, page) {
@@ -57,6 +45,7 @@ export class lk21 {
 				Referer: 'https://tv3.lk21online.mom/',
 			},
 		});
+
 		const res = await raw.json();
 		if (!res?.data?.length) throw new Error('Hasil Tidak Ditemukan');
 		return res.data.map((res) => {
@@ -74,13 +63,128 @@ export class lk21 {
 		});
 	}
 
-	async fetch(url) {
-		const res = await fetch(url, {
+	async Detail(url) {
+		const html = await this.fetch(url);
+		const $ = cheerio.load(html);
+
+		const result = {};
+
+		result.detail = {
+			title: $('.movie-info h1').text().trim(),
+			releaseDate: $('.info-tag span').eq(0).text().trim(),
+			region: $('.info-tag span').eq(1).text().trim(),
+			status: $('.info-tag span').eq(2).text().trim(),
+			synopsis: $('.synopsis').text().trim(),
+			tags: [],
+			director: '',
+			cast: [],
+			country: '',
+			poster: $('.detail picture img').attr('src') || null,
+		};
+
+		$('.detail p').each((_, el) => {
+			const label = $(el).find('span').text();
+
+			if (label.includes('Sutradara')) {
+				result.detail.director = $(el).find('a').text().trim();
+			}
+
+			if (label.includes('Bintang Film')) {
+				$(el)
+					.find('a')
+					.each((_, a) => {
+						result.detail.cast.push($(a).text().trim());
+					});
+			}
+
+			if (label.includes('Negara')) {
+				result.detail.country = $(el).find('a').text().trim();
+			}
+		});
+
+		$('.tag-list .tag a').each((_, el) => {
+			result.detail.tags.push({
+				name: $(el).text().trim(),
+				url: this.base + $(el).attr('href'),
+			});
+		});
+
+		result.trailer = $('.trailer-series iframe').attr('src') || null;
+		result.relatedSeries = [];
+
+		$('.mob-related-series .slider article').each((_, el) => {
+			result.relatedSeries.push({
+				title: $(el).find('.poster-title').text().trim(),
+				year: $(el).find('.year').text().trim(),
+				rating:
+					$(el)
+						.find('.rating')
+						.text()
+						.replace(/[^\d.]/g, '') || 'Unknown',
+				genre: $(el).find('.genre').text().trim(),
+				episode: $(el).find('.episode').text().trim(),
+				season: $(el).find('.duration').text().trim(),
+				url: this.base + $(el).find('a').attr('href'),
+				thumbnail: $(el).find('picture img').attr('src'),
+			});
+		});
+
+		result.download = $('.movie-action a').attr('href') || null;
+
+		return result;
+	}
+
+	async Download(url) {
+		const headers = {
+			'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36',
+			Referer: 'https://dl.lk21.party',
+			'x-requested-with': 'XMLHttpRequest',
+		};
+
+		const slug = url.split('/')[3];
+		const raw = await this.fetch(this.baseDL + '/get/' + slug, { headers });
+		const match = raw.match(/setCookie\('validate', '([^']+)'/);
+
+		const data = new URLSearchParams();
+		data.append('slug', slug);
+
+		const html = await this.fetch(this.baseDL + '/verifying.php?slug=' + slug, {
+			method: 'POST',
 			headers: {
-				'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36',
-				'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8',
-				Referer: 'https://google.com',
+				...headers,
+				'Content-Type': 'application/x-www-form-urlencoded',
+				Cookie: 'validate=' + match[1],
 			},
+			body: data,
+		});
+
+		const $ = cheerio.load(html);
+		const result = [];
+		$('tr').each((i, el) => {
+			const name = $(el).find('strong').text().trim();
+			const url = $(el).find('a').attr('href');
+
+			if (name && url)
+				result.push({
+					name,
+					url,
+				});
+		});
+
+		if (!result?.length) throw new Error('Link Download Tidak Ditemukan');
+
+		return result;
+	}
+	async fetch(url, options = {}) {
+		const res = await fetch(url, {
+			headers: options.headers
+				? options.headers
+				: {
+						'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36',
+						'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8',
+						Referer: 'https://google.com',
+					},
+			...options,
 		});
 
 		if (!res.ok) throw new Error(`HTTP ${res.status}, ${res.statusText}`);
@@ -104,10 +208,11 @@ export class lk21 {
 			});
 		});
 
+		if (!result?.length) throw new Error('Gagal Mengekstrak Data');
 		return result;
 	}
 
-	extractTag(html, tag) {
+	extractTag(html, tag, type) {
 		const $ = cheerio.load(html);
 		const result = new Set();
 		$(`.form-filter .form-group select[name="${tag}"] option`).each((i, el) => {
@@ -115,8 +220,6 @@ export class lk21 {
 			if (opt) result.add(opt);
 		});
 
-		return [...result];
+		if (!result.has(type)) throw new Error('Type yang dipilih tidak valid, Pilih type berikut: ' + Array.from(result).join(', '));
 	}
 }
-const anu = new lk21();
-anu.byGenre('action').then(console.log);
